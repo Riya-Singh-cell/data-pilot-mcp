@@ -10,6 +10,11 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  server: {
+    proxy: {
+      '/api': process.env.DATAPILOT_API_URL || 'http://127.0.0.1:8000',
+    },
+  },
   optimizeDeps: {
     exclude: ['lucide-react'],
   },

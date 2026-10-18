@@ -7,6 +7,11 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/data.sqlite*
 dist
 dist-ssr
 *.local

@@ -7,6 +7,8 @@
 [![MCP](https://img.shields.io/badge/Model_Context_Protocol-MCP-111827)](https://modelcontextprotocol.io/)
 [![SQLite](https://img.shields.io/badge/SQLite-Database-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 
+**Live Demo:** https://data-pilot-mcp.vercel.app/
+
 GradientHarbor is a full-stack AI-powered business intelligence and data analysis platform. It lets users ingest CSV datasets, inspect schemas and distributions, assess data quality, transform data, detect statistical anomalies, compare periods, create calculated columns, explore data with restricted SQL, and export processed versions.
 
 Its **DataPilot MCP server** exposes analytical capabilities through the [Model Context Protocol](https://modelcontextprotocol.io/) to compatible MCP AI clients. The server currently registers **11 analytical tools** (the implementation supersedes an earlier README count of nine). MCP provides a structured discovery and invocation layer: a compatible client selects a tool, sends validated arguments, and receives evidence from the actual dataset. An optional OpenAI-compatible endpoint can interpret that evidence, while a deterministic rule-based summary is used when no provider is configured.

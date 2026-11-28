@@ -474,7 +474,7 @@ async def _call_mcp_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]
     from mcp.client.stdio import stdio_client
 
     env = os.environ.copy()
-    env["DATAPILOT_DB_PATH"] = str(analytics.DB_PATH)
+    env["DATAPILOT_DB_PATH"] = str(analytics.DB_PATH.resolve())
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "backend.mcp_server"],

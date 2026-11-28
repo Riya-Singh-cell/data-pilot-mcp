@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 import asyncio
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -144,6 +145,21 @@ def test_ai_uses_real_mcp_tool_and_returns_evidence(database, monkeypatch):
     assert response["provider"] == "rule-based"
     assert response["tool"] == "inspect_dataset"
     assert response["evidence"]["shape"]["rows"] > 0
+
+
+def test_ai_mcp_subprocess_resolves_relative_database_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(analytics, "DB_PATH", Path("relative.sqlite"))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    analytics.initialize()
+    dataset = upload(analytics.DB_PATH, "chat.csv", "id,value\n1,10\n")
+
+    response = asyncio.run(api.ai_chat(api.ChatRequest(
+        dataset_id=dataset["id"], message="Summarize this dataset",
+    )))
+
+    assert response["provider"] == "rule-based"
+    assert response["evidence"]["shape"] == {"rows": 1, "columns": 2}
 
 
 def test_quality_chat_summary_explains_each_finding():

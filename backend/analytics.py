@@ -659,41 +659,44 @@ def detect_anomalies(
             if normalized_name == "id" or normalized_name.endswith(("_id", "_key", "_uuid")):
                 continue
             name = _quote(column["name"])
-            values = connection.execute(
-                f"SELECT {name} FROM {_quote(table)} WHERE {name} IS NOT NULL AND typeof({name}) IN ('integer', 'real')"
-            )
-            count = 0
-            mean = 0.0
-            sum_squared_deviations = 0.0
-            distinct_values: set[float] = set()
-            for (raw_value,) in values:
-                observed = float(raw_value)
-                count += 1
-                if len(distinct_values) <= 2:
-                    distinct_values.add(observed)
-                delta = observed - mean
-                mean += delta / count
-                sum_squared_deviations += delta * (observed - mean)
+            stats = connection.execute(
+                f"SELECT COUNT({name}), AVG(CAST({name} AS REAL)), "
+                f"AVG(CAST({name} AS REAL) * CAST({name} AS REAL)), "
+                f"COUNT(DISTINCT {name}), MIN({name}), MAX({name}) "
+                f"FROM {_quote(table)} "
+                f"WHERE {name} IS NOT NULL AND typeof({name}) IN ('integer', 'real')"
+            ).fetchone()
+            count, mean, mean_squared, distinct_count, minimum, maximum = stats
             if count < 4:
                 continue
-            if distinct_values and distinct_values <= {0.0, 1.0}:
+            if (
+                distinct_count <= 2
+                and float(minimum) >= 0
+                and float(maximum) <= 1
+            ):
                 continue
-            deviation = (sum_squared_deviations / count) ** 0.5
+            variance = max((mean_squared or 0.0) - (mean or 0.0) ** 2, 0.0)
+            deviation = variance ** 0.5
             if deviation:
-                for (raw_value,) in connection.execute(
-                    f"SELECT {name} FROM {_quote(table)} WHERE {name} IS NOT NULL AND typeof({name}) IN ('integer', 'real')"
-                ):
+                remaining = 100 - scanned
+                outlier_rows = connection.execute(
+                    f"SELECT {name} FROM {_quote(table)} "
+                    f"WHERE {name} IS NOT NULL AND typeof({name}) IN ('integer', 'real') "
+                    f"AND ABS((CAST({name} AS REAL) - ?) / ?) >= 3 "
+                    f"LIMIT ?",
+                    (mean, deviation, remaining),
+                )
+                for (raw_value,) in outlier_rows:
                     observed = float(raw_value)
                     z_score = (observed - mean) / deviation
-                    if abs(z_score) >= 3:
-                        scanned += 1
-                        findings.append({
-                            "column": column["name"], "observed_value": observed,
-                            "z_score": round(z_score, 2), "method": "z-score (|z| >= 3)",
-                            "explanation": "This value is at least three population standard deviations from the column mean.",
-                        })
-                        if scanned >= 100:
-                            break
+                    scanned += 1
+                    findings.append({
+                        "column": column["name"], "observed_value": observed,
+                        "z_score": round(z_score, 2), "method": "z-score (|z| >= 3)",
+                        "explanation": "This value is at least three population standard deviations from the column mean.",
+                    })
+                    if scanned >= 100:
+                        break
             if scanned >= 100:
                 break
         return {

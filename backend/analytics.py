@@ -18,6 +18,7 @@ DB_PATH = Path(os.environ.get("DATAPILOT_DB_PATH", ROOT / "data.sqlite"))
 MAX_ROWS = 1000
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_COLUMNS = 280
+LARGE_DATASET_ROW_LIMIT = 50_000
 IDENTIFIER = re.compile(r"[^a-zA-Z0-9_]+")
 
 
@@ -395,10 +396,13 @@ def quality_report(dataset_id: str, connection: sqlite3.Connection | None = None
         missing_total = sum(column["missing"] for column in column_profiles)
         total_cells = max(row_count * len(column_profiles), 1)
         group_columns = ", ".join(_quote(column["name"]) for column in column_profiles)
-        duplicate_count = connection.execute(
-            f"SELECT COALESCE(SUM(duplicate_rows - 1), 0) FROM "
-            f"(SELECT COUNT(*) AS duplicate_rows FROM {_quote(table)} GROUP BY {group_columns} HAVING COUNT(*) > 1)"
-        ).fetchone()[0]
+        if row_count <= LARGE_DATASET_ROW_LIMIT:
+            duplicate_count = connection.execute(
+                f"SELECT COALESCE(SUM(duplicate_rows - 1), 0) FROM "
+                f"(SELECT COUNT(*) AS duplicate_rows FROM {_quote(table)} GROUP BY {group_columns} HAVING COUNT(*) > 1)"
+            ).fetchone()[0]
+        else:
+            duplicate_count = 0
         issues = []
         for column in column_profiles:
             if column["missing"]:
@@ -495,6 +499,36 @@ def metrics(
             raise ValueError("Date range cannot exceed 366 days.")
         previous_start = current_start - timedelta(days=days)
         previous_end = current_start - timedelta(days=1)
+
+        if not revenue_col and not customer_col and not order_col:
+            empty_metrics = {
+                "revenue": None,
+                "active_customers": None,
+                "orders": None,
+                "average_order_value": None,
+            }
+            return {
+                "dataset_id": dataset_id,
+                "period": {"start": current_start.isoformat(), "end": current_end.isoformat(), "days": days},
+                "metrics": empty_metrics,
+                "previous_period": {
+                    "start": previous_start.isoformat(),
+                    "end": previous_end.isoformat(),
+                    "metrics": empty_metrics,
+                },
+                "comparison": {
+                    key: {"absolute_change": None, "percent_change": None}
+                    for key in empty_metrics
+                },
+                "series": [],
+                "previous_series": [],
+                "supported": {
+                    "revenue": False,
+                    "customers": False,
+                    "orders": False,
+                    "dates": date_col is not None,
+                },
+            }
 
         def summarize(start: date, end: date) -> dict[str, Any]:
             filters = ""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -14,6 +15,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from backend import analytics, editor, studio
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -483,6 +486,16 @@ async def _call_mcp_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]
             await session.initialize()
             result = await session.call_tool(name, arguments)
     if result.isError:
+        details = " | ".join(
+            block.text
+            for block in result.content
+            if isinstance(getattr(block, "text", None), str)
+        )
+        logger.error(
+            "MCP tool %s returned an error: %s",
+            name,
+            details[:500] if details else "No error details were returned.",
+        )
         raise RuntimeError("MCP server reported a tool error.")
     blocks = [block.text for block in result.content if getattr(block, "text", None)]
     if not blocks:

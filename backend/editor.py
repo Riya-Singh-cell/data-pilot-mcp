@@ -67,6 +67,13 @@ def _safe_name(name: str) -> str:
     return f"{basename[:155]}.csv"
 
 
+def _renamed_column_name(value: str, index: int = 0) -> str:
+    name = re.sub(r"[^a-zA-Z0-9_]+", "_", value.strip()).strip("_") or f"column_{index + 1}"
+    if name[0].isdigit():
+        name = f"column_{name}"
+    return name
+
+
 def _unique_name(connection: sqlite3.Connection, name: str) -> str:
     normalized = _safe_name(name)
     stem = normalized[:-4]
@@ -530,8 +537,8 @@ def preview_transformation(
             raw_name = transform.get("new_name")
             if not isinstance(raw_name, str) or not raw_name.strip():
                 raise ValueError("Enter a name for the renamed column.")
-            new_name = analytics._normalized_name(raw_name, 0, set())
-            if new_name in column_map and new_name != source:
+            new_name = _renamed_column_name(raw_name)
+            if any(name.casefold() == new_name.casefold() and name != source for name in column_map):
                 raise ValueError(f"Column '{new_name}' already exists.")
             transform["_new_name"] = new_name
         elif kind == "split_column":
@@ -1194,8 +1201,8 @@ def _apply_batch(connection: sqlite3.Connection, dataset_id: str, operations: li
                 raise ValueError(f"Column '{old_name}' does not exist in this dataset.")
             if not isinstance(raw_name, str) or not raw_name.strip():
                 raise ValueError("Column name must not be empty.")
-            name = analytics._normalized_name(raw_name, 0, set())
-            if name in names and name != old_name:
+            name = _renamed_column_name(raw_name)
+            if any(existing.casefold() == name.casefold() and existing != old_name for existing in names):
                 raise ValueError(f"Column '{name}' already exists.")
             if old_name != name:
                 connection.execute(

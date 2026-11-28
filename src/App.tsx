@@ -11,6 +11,7 @@ import DatasetEditor from './DatasetEditor';
 
 type View = 'Overview' | 'Datasets' | 'SQL workspace' | 'Data quality' | 'Analytics' | 'Settings';
 type ChatItem = { role: 'user' | 'assistant'; text: string; evidence?: ChatResponse };
+type OverviewCard = { label: string; value: string; change: number | null; note?: string; accent: string };
 const NAV: Array<{ label: View; icon: typeof LayoutDashboard }> = [
   { label: 'Overview', icon: LayoutDashboard },
   { label: 'Datasets', icon: Table2 },
@@ -324,39 +325,88 @@ function Panel({ title, eyebrow, action, children }: { title: string; eyebrow: s
   return <div className="rounded-xl border border-white/[0.08] bg-[#0e1421] p-4 sm:p-5"><div className="flex items-start justify-between"><div><h2 className="text-sm font-medium text-white">{title}</h2><p className="mt-1 text-[10px] text-slate-500">{eyebrow}</p></div>{action}</div>{children}</div>;
 }
 
-function MetricCard({ label, value, change, positive, onClick, accent }: { label: string; value: string; change: number | null; positive?: boolean; onClick: () => void; accent: string }) {
+function MetricCard({ label, value, change, note, positive, onClick, accent }: { label: string; value: string; change: number | null; note?: string; positive?: boolean; onClick: () => void; accent: string }) {
   const styles: Record<string, string> = { sky: 'bg-sky-400/10 text-sky-300', teal: 'bg-teal-400/10 text-teal-300', blue: 'bg-blue-400/10 text-blue-300', emerald: 'bg-emerald-400/10 text-emerald-300' };
-  return <button onClick={onClick} className="group rounded-xl border border-white/[0.08] bg-[#0e1421] p-4 text-left transition hover:-translate-y-0.5 hover:border-white/[0.14]"><div className="flex items-start justify-between"><span className="text-xs text-slate-500">{label}</span><span className={`rounded-md p-1.5 ${styles[accent]}`}>{positive === false ? <ArrowDownRight size={14} /> : <ArrowUpRight size={14} />}</span></div><p className="mt-4 text-xl font-semibold tracking-tight text-white">{value}</p><p className="mt-2 text-[11px] text-slate-500">{change === null ? 'Comparison unavailable' : <span className={change >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{change >= 0 ? '+' : ''}{change}% vs prior period</span>}</p></button>;
+  return <button onClick={onClick} className="group rounded-xl border border-white/[0.08] bg-[#0e1421] p-4 text-left transition hover:-translate-y-0.5 hover:border-white/[0.14]"><div className="flex items-start justify-between"><span className="text-xs text-slate-500">{label}</span><span className={`rounded-md p-1.5 ${styles[accent]}`}>{positive === false ? <ArrowDownRight size={14} /> : <ArrowUpRight size={14} />}</span></div><p className="mt-4 text-xl font-semibold tracking-tight text-white">{value}</p><p className="mt-2 text-[11px] text-slate-500">{change === null ? note ?? 'Comparison unavailable' : <span className={change >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{change >= 0 ? '+' : ''}{change}% vs prior period</span>}</p></button>;
 }
 
 function Overview({ datasets, datasetId, onSelect, metrics, quality, detail, onNavigate }: { datasets: Dataset[]; datasetId: string; onSelect: (value: string) => void; metrics: MetricResponse | null; quality: QualityReport | null; detail: DatasetDetail | null; onNavigate: (view: View) => void }) {
   const fmt = (value: number | null | undefined, currency = false) => value === null || value === undefined ? '—' : new Intl.NumberFormat(undefined, { style: currency ? 'currency' : 'decimal', currency: 'USD', maximumFractionDigits: currency ? 0 : 1 }).format(value);
-  const change = (key: string) => metrics?.comparison[key]?.percent_change ?? null;
-  const values = metrics?.series ?? [];
-  const maximum = Math.max(...[...values, ...(metrics?.previous_series ?? [])].map((point) => point.revenue), 1);
+  const activeMetrics = metrics?.dataset_id === datasetId ? metrics : null;
+  const activeQuality = quality?.dataset_id === datasetId ? quality : null;
+  const activeDetail = detail?.dataset.id === datasetId ? detail : null;
+  const change = (key: string) => activeMetrics?.comparison[key]?.percent_change ?? null;
+  const values = activeMetrics?.series ?? [];
+  const maximum = Math.max(...[...values, ...(activeMetrics?.previous_series ?? [])].map((point) => point.revenue), 1);
+  const rowCount = activeDetail?.shape.rows ?? datasets.find((dataset) => dataset.id === datasetId)?.row_count ?? 0;
+  const qualityByName = new Map((activeQuality?.columns ?? []).map((column) => [column.name, column]));
+  const columnLabel = (name: string) => name.split(/[_\s]+/).filter(Boolean).map((word) => word.toLowerCase() === 'bmi' ? 'BMI' : `${word[0].toUpperCase()}${word.slice(1)}`).join(' ');
+  const averageLabel = (name: string) => `Average ${columnLabel(name).replace(/^(avg|average)\s+/i, '')}`;
+  const isIdentifier = (name: string) => /^(id|.*_id|.*_key|.*_uuid)$/i.test(name);
+  const numericCards = (activeDetail?.columns ?? [])
+    .filter((column) => /^(INTEGER|REAL|NUMERIC|DECIMAL|FLOAT|DOUBLE)/i.test(column.type) && !isIdentifier(column.name))
+    .filter((column) => (qualityByName.get(column.name)?.unique ?? 0) > 2)
+    .flatMap((column, index) => {
+      const mean = qualityByName.get(column.name)?.statistics.mean;
+      return mean === null || mean === undefined ? [] : [{
+        label: averageLabel(column.name),
+        value: fmt(mean),
+        change: null,
+        note: `Across ${rowCount.toLocaleString()} rows`,
+        accent: (['sky', 'teal', 'blue'] as const)[index % 3],
+      }];
+    });
+  const categoryCards = (activeDetail?.columns ?? [])
+    .filter((column) => !isIdentifier(column.name) && !/(date|time|timestamp|_at)$/i.test(column.name))
+    .filter((column) => {
+      const profile = qualityByName.get(column.name);
+      return profile && profile.unique > 1 && (column.type === 'TEXT' || profile.unique <= 10);
+    })
+    .map((column, index) => ({
+      label: `${columnLabel(column.name)} values`,
+      value: qualityByName.get(column.name)?.unique.toLocaleString() ?? '—',
+      change: null,
+      note: 'Distinct values in dataset',
+      accent: (['sky', 'teal', 'blue'] as const)[index % 3],
+    }));
+  const fallbackCards = [
+    { label: 'Rows', value: rowCount.toLocaleString(), change: null, note: 'Records in dataset', accent: 'sky' },
+    { label: 'Columns', value: (activeDetail?.shape.columns ?? 0).toLocaleString(), change: null, note: 'Fields in dataset', accent: 'teal' },
+  ];
+  const businessCards: OverviewCard[] = activeMetrics?.supported.revenue ? [
+    { label: 'Net revenue', value: activeMetrics.metrics.revenue === null ? null : fmt(activeMetrics.metrics.revenue, true), key: 'revenue', accent: 'sky' },
+    { label: 'Active customers', value: activeMetrics.metrics.active_customers === null ? null : fmt(activeMetrics.metrics.active_customers), key: 'active_customers', accent: 'teal' },
+    { label: 'Average order value', value: activeMetrics.metrics.average_order_value === null ? null : fmt(activeMetrics.metrics.average_order_value, true), key: 'average_order_value', accent: 'blue' },
+    { label: 'Orders', value: activeMetrics.metrics.orders === null ? null : fmt(activeMetrics.metrics.orders), key: 'orders', accent: 'teal' },
+  ].flatMap((card): OverviewCard[] => card.value === null ? [] : [{
+    label: card.label,
+    value: card.value,
+    accent: card.accent,
+    change: change(card.key),
+  }]) : [];
+  const summaryCards: OverviewCard[] = [...businessCards, ...numericCards, ...categoryCards, ...fallbackCards].slice(0, 3);
   return <>
-    <div className="mb-5 flex flex-wrap items-center gap-3"><label className="text-xs text-slate-500">Active dataset<select value={datasetId} onChange={(event) => onSelect(event.target.value)} className="ml-2 rounded-lg border border-white/10 bg-[#111624] px-3 py-2 text-xs text-slate-200">{datasets.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.row_count.toLocaleString()} rows</option>)}</select></label><span className="text-[10px] text-slate-600">{detail?.shape.rows.toLocaleString()} rows · {detail?.shape.columns} columns</span></div>
-    {!metrics && <p className="mb-4 rounded-lg border border-amber-400/20 bg-amber-400/[0.05] p-3 text-xs text-amber-200">Metrics unavailable until a dataset with supported fields is selected.</p>}
+    <div className="mb-5 flex flex-wrap items-center gap-3"><label className="text-xs text-slate-500">Active dataset<select value={datasetId} onChange={(event) => onSelect(event.target.value)} className="ml-2 rounded-lg border border-white/10 bg-[#111624] px-3 py-2 text-xs text-slate-200">{datasets.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.row_count.toLocaleString()} rows</option>)}</select></label><span className="text-[10px] text-slate-600">{activeDetail?.shape.rows.toLocaleString()} rows · {activeDetail?.shape.columns} columns</span></div>
     <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <MetricCard label="Net revenue" value={fmt(metrics?.metrics.revenue, true)} change={change('revenue')} onClick={() => onNavigate('Analytics')} accent="sky" />
-      <MetricCard label="Active customers" value={fmt(metrics?.metrics.active_customers)} change={change('active_customers')} onClick={() => onNavigate('Analytics')} accent="teal" />
-      <MetricCard label="Average order value" value={fmt(metrics?.metrics.average_order_value, true)} change={change('average_order_value')} onClick={() => onNavigate('Analytics')} accent="blue" />
-      <MetricCard label="Data quality score" value={quality?.score === null ? 'N/A' : quality ? `${quality.score}%` : '—'} change={null} onClick={() => onNavigate('Data quality')} accent="emerald" />
+      {summaryCards.map((card) => <MetricCard key={card.label} label={card.label} value={card.value} change={card.change} note={card.note} onClick={() => onNavigate('Analytics')} accent={card.accent} />)}
+      <MetricCard label="Data quality score" value={activeQuality?.score === null ? 'N/A' : activeQuality ? `${activeQuality.score}%` : '—'} change={null} onClick={() => onNavigate('Data quality')} accent="emerald" />
     </div>
     <div className="mb-6 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
-      <Panel title="Revenue performance" eyebrow={metrics ? `${metrics.period.start} – ${metrics.period.end} · compared with preceding ${metrics.period.days} days` : 'Waiting for dataset'}>
-        <div className="mt-6 flex items-end justify-between"><div><span className="text-3xl font-semibold tracking-tight text-white">{fmt(metrics?.metrics.revenue, true)}</span><span className="ml-3 text-xs text-slate-500">{metrics?.supported.revenue ? 'period revenue' : 'revenue field not detected'}</span></div>{metrics?.comparison.revenue?.percent_change !== null && metrics?.comparison.revenue?.percent_change !== undefined && <span className={`rounded-full px-2 py-1 text-[11px] ${metrics.comparison.revenue.percent_change >= 0 ? 'bg-emerald-400/10 text-emerald-300' : 'bg-rose-400/10 text-rose-300'}`}>{metrics.comparison.revenue.percent_change > 0 ? '+' : ''}{metrics.comparison.revenue.percent_change}%</span>}</div>
-        {values.length ? <><div className="mt-7 flex h-[190px] items-end gap-1 border-b border-white/[0.07] px-1">{values.map((point, index) => { const previous = metrics?.previous_series?.[index]; return <div key={point.date} className="flex h-full flex-1 items-end gap-px" title={`${point.date}: ${fmt(point.revenue, true)}${previous ? ` · previous period ${previous.date}: ${fmt(previous.revenue, true)}` : ''}`}><div className="w-1/2 rounded-t-sm bg-gradient-to-t from-sky-500/35 to-sky-300/90 hover:to-sky-200" style={{ height: `${Math.max(point.revenue / maximum * 100, 2)}%` }} />{previous && <div className="w-1/2 rounded-t-sm bg-slate-600/80 hover:bg-slate-400" style={{ height: `${Math.max(previous.revenue / maximum * 100, 2)}%` }} />}</div>; })}</div><div className="mt-3 flex justify-between text-[10px] text-slate-600"><span>{values[0]?.date}</span><span>{values[values.length - 1]?.date}</span></div><div className="mt-4 flex gap-4 text-[10px] text-slate-400"><span className="flex items-center gap-2"><i className="h-2 w-2 rounded-full bg-sky-400" />Current period</span><span className="flex items-center gap-2"><i className="h-2 w-2 rounded-full bg-slate-500" />Previous period</span></div></> : <div className="mt-6 flex h-40 items-center justify-center rounded-lg border border-dashed border-white/10 text-xs text-slate-500">{metrics?.supported.dates ? 'No revenue rows in this range.' : 'A recognized date and revenue column are required for a time series.'}</div>}
+      <Panel title={activeMetrics?.supported.revenue ? 'Revenue performance' : 'Dataset profile'} eyebrow={activeMetrics ? activeMetrics.supported.revenue ? `${activeMetrics.period.start} – ${activeMetrics.period.end} · compared with preceding ${activeMetrics.period.days} days` : 'Summary of detected fields' : 'Waiting for dataset'}>
+        {activeMetrics?.supported.revenue ? <>
+          <div className="mt-6 flex items-end justify-between"><div><span className="text-3xl font-semibold tracking-tight text-white">{fmt(activeMetrics.metrics.revenue, true)}</span><span className="ml-3 text-xs text-slate-500">period revenue</span></div>{activeMetrics.comparison.revenue?.percent_change !== null && activeMetrics.comparison.revenue?.percent_change !== undefined && <span className={`rounded-full px-2 py-1 text-[11px] ${activeMetrics.comparison.revenue.percent_change >= 0 ? 'bg-emerald-400/10 text-emerald-300' : 'bg-rose-400/10 text-rose-300'}`}>{activeMetrics.comparison.revenue.percent_change > 0 ? '+' : ''}{activeMetrics.comparison.revenue.percent_change}%</span>}</div>
+          {values.length ? <><div className="mt-7 flex h-[190px] items-end gap-1 border-b border-white/[0.07] px-1">{values.map((point, index) => { const previous = activeMetrics.previous_series[index]; return <div key={point.date} className="flex h-full flex-1 items-end gap-px" title={`${point.date}: ${fmt(point.revenue, true)}${previous ? ` · previous period ${previous.date}: ${fmt(previous.revenue, true)}` : ''}`}><div className="w-1/2 rounded-t-sm bg-gradient-to-t from-sky-500/35 to-sky-300/90 hover:to-sky-200" style={{ height: `${Math.max(point.revenue / maximum * 100, 2)}%` }} />{previous && <div className="w-1/2 rounded-t-sm bg-slate-600/80 hover:bg-slate-400" style={{ height: `${Math.max(previous.revenue / maximum * 100, 2)}%` }} />}</div>; })}</div><div className="mt-3 flex justify-between text-[10px] text-slate-600"><span>{values[0]?.date}</span><span>{values[values.length - 1]?.date}</span></div><div className="mt-4 flex gap-4 text-[10px] text-slate-400"><span className="flex items-center gap-2"><i className="h-2 w-2 rounded-full bg-sky-400" />Current period</span><span className="flex items-center gap-2"><i className="h-2 w-2 rounded-full bg-slate-500" />Previous period</span></div></> : <div className="mt-6 flex h-40 items-center justify-center rounded-lg border border-dashed border-white/10 text-xs text-slate-500">{activeMetrics.supported.dates ? 'No revenue rows in this range.' : 'A recognized date and revenue column are required for a time series.'}</div>}
+        </> : <div className="mt-6 flex h-40 flex-col items-center justify-center rounded-lg border border-dashed border-white/10 px-6 text-center text-xs text-slate-500"><p>{activeDetail?.columns.length ? `This dataset has no recognized revenue and date fields. Explore ${numericCards.length} numeric measures and ${categoryCards.length} categorical fields in Analytics.` : 'Dataset fields will appear here when the schema is available.'}</p><button onClick={() => onNavigate('Analytics')} className="mt-4 font-medium text-sky-300">Explore analytics <ChevronRight size={14} className="inline" /></button></div>}
       </Panel>
       <Panel title="Dataset snapshot" eyebrow="Actual source metadata">
-        <div className="mt-6 grid grid-cols-2 gap-3"><Snapshot label="Rows" value={detail?.shape.rows.toLocaleString() ?? '—'} /><Snapshot label="Columns" value={detail?.shape.columns.toLocaleString() ?? '—'} /><Snapshot label="Orders" value={fmt(metrics?.metrics.orders)} /><Snapshot label="Quality issues" value={quality?.issues.length.toString() ?? '—'} /></div><button onClick={() => onNavigate('Datasets')} className="mt-6 flex items-center gap-1 text-xs font-medium text-sky-300">Inspect schema <ChevronRight size={14} /></button>
+        <div className="mt-6 grid grid-cols-2 gap-3"><Snapshot label="Rows" value={activeDetail?.shape.rows.toLocaleString() ?? '—'} /><Snapshot label="Columns" value={activeDetail?.shape.columns.toLocaleString() ?? '—'} /><Snapshot label={activeMetrics?.metrics.orders !== null && activeMetrics?.metrics.orders !== undefined ? 'Orders' : 'Numeric fields'} value={activeMetrics?.metrics.orders !== null && activeMetrics?.metrics.orders !== undefined ? fmt(activeMetrics.metrics.orders) : numericCards.length.toLocaleString()} /><Snapshot label="Quality issues" value={activeQuality?.issues.length.toString() ?? '—'} /></div><button onClick={() => onNavigate('Datasets')} className="mt-6 flex items-center gap-1 text-xs font-medium text-sky-300">Inspect schema <ChevronRight size={14} /></button>
       </Panel>
     </div>
     <div className="grid gap-4 xl:grid-cols-2">
-      <Panel title="Data quality" eyebrow={quality ? quality.calculation : 'No quality report yet'} action={<button onClick={() => onNavigate('Data quality')} className="text-xs text-sky-300">View report</button>}>
-        {quality ? <><div className="mt-5 flex items-center gap-4"><div className="flex h-20 w-20 items-center justify-center rounded-full border-4 border-emerald-400/70 text-lg font-semibold text-white">{quality.score}%</div><div><p className="text-sm font-medium text-white">{quality.issues.length ? `${quality.issues.length} issue types found` : 'No missing or duplicate records detected'}</p><p className="mt-1 text-xs text-slate-500">{quality.missing_values} missing cells · {quality.duplicate_count} duplicate rows</p></div></div><p className="mt-5 border-t border-white/[0.07] pt-4 text-[10px] leading-5 text-slate-500">{quality.calculation}</p></> : <EmptyMessage text="Quality results appear when the API is available." />}
+      <Panel title="Data quality" eyebrow={activeQuality ? activeQuality.calculation : 'No quality report yet'} action={<button onClick={() => onNavigate('Data quality')} className="text-xs text-sky-300">View report</button>}>
+        {activeQuality ? <><div className="mt-5 flex items-center gap-4"><div className="flex h-20 w-20 items-center justify-center rounded-full border-4 border-emerald-400/70 text-lg font-semibold text-white">{activeQuality.score}%</div><div><p className="text-sm font-medium text-white">{activeQuality.issues.length ? `${activeQuality.issues.length} issue types found` : 'No missing or duplicate records detected'}</p><p className="mt-1 text-xs text-slate-500">{activeQuality.missing_values} missing cells · {activeQuality.duplicate_count} duplicate rows</p></div></div><p className="mt-5 border-t border-white/[0.07] pt-4 text-[10px] leading-5 text-slate-500">{activeQuality.calculation}</p></> : <EmptyMessage text="Quality results appear when the API is available." />}
       </Panel>
-      <Panel title="Recent activity" eyebrow="Live workspace state"><div className="mt-5 flex items-start gap-3"><div className="rounded-lg bg-sky-400/10 p-2 text-sky-300"><Database size={15} /></div><div><p className="text-xs font-medium text-slate-200">{datasets.length} dataset{datasets.length === 1 ? '' : 's'} available</p><p className="mt-1 text-[11px] text-slate-500">{detail?.dataset.uploaded_at ? `Selected data imported ${new Date(detail.dataset.uploaded_at).toLocaleString()}` : 'No recent activity recorded.'}</p></div></div></Panel>
+      <Panel title="Recent activity" eyebrow="Live workspace state"><div className="mt-5 flex items-start gap-3"><div className="rounded-lg bg-sky-400/10 p-2 text-sky-300"><Database size={15} /></div><div><p className="text-xs font-medium text-slate-200">{datasets.length} dataset{datasets.length === 1 ? '' : 's'} available</p><p className="mt-1 text-[11px] text-slate-500">{activeDetail?.dataset.uploaded_at ? `Selected data imported ${new Date(activeDetail.dataset.uploaded_at).toLocaleString()}` : 'No recent activity recorded.'}</p></div></div></Panel>
     </div>
     <div className="mt-6 rounded-xl border border-white/[0.08] bg-[#0e1421] p-4 sm:p-5"><div className="flex flex-col gap-4 md:flex-row md:items-center"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-400/10 text-sky-300"><TerminalSquare size={19} /></div><div className="flex-1"><p className="text-sm font-medium text-white">Explore with read-only SQL</p><p className="mt-1 text-xs text-slate-500">Queries are restricted to the selected dataset and capped at 1,000 rows.</p></div><button onClick={() => onNavigate('SQL workspace')} className="rounded-lg bg-sky-400 px-3 py-2 text-xs font-semibold text-[#07101b]">Open SQL workspace</button></div></div>
   </>;

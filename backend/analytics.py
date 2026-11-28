@@ -655,6 +655,9 @@ def detect_anomalies(
         for column in columns:
             if column["type"] not in ("INTEGER", "REAL"):
                 continue
+            normalized_name = re.sub(r"[^a-z0-9]+", "_", column["name"].lower()).strip("_")
+            if normalized_name == "id" or normalized_name.endswith(("_id", "_key", "_uuid")):
+                continue
             name = _quote(column["name"])
             values = connection.execute(
                 f"SELECT {name} FROM {_quote(table)} WHERE {name} IS NOT NULL AND typeof({name}) IN ('integer', 'real')"
@@ -662,13 +665,18 @@ def detect_anomalies(
             count = 0
             mean = 0.0
             sum_squared_deviations = 0.0
+            distinct_values: set[float] = set()
             for (raw_value,) in values:
                 observed = float(raw_value)
                 count += 1
+                if len(distinct_values) <= 2:
+                    distinct_values.add(observed)
                 delta = observed - mean
                 mean += delta / count
                 sum_squared_deviations += delta * (observed - mean)
             if count < 4:
+                continue
+            if distinct_values and distinct_values <= {0.0, 1.0}:
                 continue
             deviation = (sum_squared_deviations / count) ** 0.5
             if deviation:
@@ -691,7 +699,7 @@ def detect_anomalies(
         return {
             "dataset_id": dataset_id,
             "rows_scanned": dataset["row_count"],
-            "method": "population z-score (|z| >= 3), capped at 100 returned findings",
+            "method": "population z-score (|z| >= 3) on non-identifier numeric measures, excluding binary 0/1 fields; capped at 100 returned findings",
             "anomalies": findings,
         }
     finally:

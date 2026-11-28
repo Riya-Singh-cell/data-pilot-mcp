@@ -73,6 +73,23 @@ def test_rows_columns_and_column_names_are_reversible(database):
     assert redone["dataset"]["row_count"] == 2
 
 
+def test_rename_column_preserves_requested_case_and_values(database):
+    original = upload("sales.csv", "category,revenue\nElectronics,66\nHome,105\n")
+    working = editor.ensure_working_copy(original["id"])
+
+    renamed = editor.apply_edits(working["id"], [
+        {"type": "rename_column", "old_name": "category", "name": "CATEGORY"},
+    ])
+
+    assert [column["name"] for column in editor.editor_records(working["id"])["columns"]] == [
+        "CATEGORY", "revenue",
+    ]
+    assert [row["CATEGORY"] for row in values(working["id"])] == ["Electronics", "Home"]
+
+    editor.apply_edits(working["id"], renamed["inverse_operations"])
+    assert [row["category"] for row in values(working["id"])] == ["Electronics", "Home"]
+
+
 def test_validation_failure_rolls_back_entire_edit_batch(database):
     original = upload()
     working = editor.ensure_working_copy(original["id"])

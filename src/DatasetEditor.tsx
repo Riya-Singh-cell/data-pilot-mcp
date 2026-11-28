@@ -48,6 +48,12 @@ function normalizeColumnName(value: string, index: number): string {
   return name;
 }
 
+function normalizeRenamedColumnName(value: string, index: number): string {
+  let name = value.replace(/[^a-zA-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || `column_${index + 1}`;
+  if (/^[0-9]/.test(name)) name = `column_${name}`;
+  return name;
+}
+
 function applyOperations(
   originalRows: EditorRow[],
   originalColumns: EditorColumn[],
@@ -94,7 +100,8 @@ function applyOperations(
         ? { ...column, type: operation.column_type }
         : column);
     } else if (operation.type === 'rename_column') {
-      const name = normalizeColumnName(operation.name, 0);
+      const name = normalizeRenamedColumnName(operation.name, 0);
+      if (name === operation.old_name) continue;
       columns = columns.map((column) => column.name === operation.old_name ? { ...column, name } : column);
       rows = rows.map((row) => {
         const next = { ...row };
@@ -420,8 +427,12 @@ export default function DatasetEditor({ dataset, onClose, onSaved, onToast }: Ed
     }
     const rawName = window.prompt('Enter the new column name:', oldName);
     if (rawName === null) return;
-    const name = normalizeColumnName(rawName, 0);
-    if (!rawName.trim() || edited.columns.some((column) => column.name === name && column.name !== oldName)) {
+    const name = normalizeRenamedColumnName(rawName, 0);
+    if (!rawName.trim()) {
+      setError('Enter a non-empty, unique column name.');
+      return;
+    }
+    if (edited.columns.some((column) => column.name.toLowerCase() === name.toLowerCase() && column.name !== oldName)) {
       setError('Enter a non-empty, unique column name.');
       return;
     }

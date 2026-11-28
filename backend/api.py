@@ -501,7 +501,27 @@ def _summarize(tool_name: str, data: dict[str, Any]) -> str:
     if tool_name == "get_data_quality_report":
         if data["score"] is None:
             return "The dataset has no records to assess, so a data-quality score is unavailable."
-        return f"Data quality score: {data['score']} / 100. Found {len(data['issues'])} quality issue(s) across {data['row_count']} rows."
+        issues = data.get("issues", [])
+        if not issues:
+            return (
+                f"Data quality score: {data['score']} / 100. No issues were found across "
+                f"{data['row_count']} rows. The score checks missing cells and duplicate rows."
+            )
+        findings = []
+        for issue in issues:
+            label = issue.get("column") or str(issue.get("type", "Quality finding")).replace("_", " ")
+            description = issue.get("description") or issue.get("type", "Quality finding")
+            recommendation = issue.get("recommendation")
+            finding = f"- {label}: {description} ({issue.get('severity', 'unspecified')} severity)"
+            if recommendation:
+                finding += f" Recommendation: {recommendation}"
+            findings.append(finding)
+        return (
+            f"Data quality score: {data['score']} / 100 across {data['row_count']} rows. "
+            "The score measures missing cells and duplicate rows only; it does not include "
+            "type inconsistencies or statistical outlier warnings. Findings:\n"
+            + "\n".join(findings)
+        )
     if tool_name == "detect_anomalies":
         return f"Anomaly scan found {len(data['anomalies'])} flagged observation(s). Method: {data['method']}."
     if tool_name == "compare_periods":

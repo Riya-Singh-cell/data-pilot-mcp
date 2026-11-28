@@ -146,6 +146,36 @@ def test_ai_uses_real_mcp_tool_and_returns_evidence(database, monkeypatch):
     assert response["evidence"]["shape"]["rows"] > 0
 
 
+def test_quality_chat_summary_explains_each_finding():
+    answer = api._summarize("get_data_quality_report", {
+        "score": 100.0,
+        "row_count": 5110,
+        "issues": [
+            {
+                "type": "type_inconsistency",
+                "column": "bmi",
+                "count": 201,
+                "severity": "medium",
+                "description": "201 non-numeric value(s) occur in a numeric column.",
+                "recommendation": "Review source values and correct or explicitly map non-numeric entries.",
+            },
+            {
+                "type": "statistical_outliers",
+                "column": None,
+                "count": 100,
+                "severity": "low",
+                "description": "100 numeric outlier warning(s) flagged by z-score.",
+                "recommendation": "Review these statistical warnings; they are not proof of data errors.",
+            },
+        ],
+    })
+
+    assert "201 non-numeric value(s)" in answer
+    assert "- bmi: 201 non-numeric" in answer
+    assert "100 numeric outlier warning(s)" in answer
+    assert "does not include type inconsistencies or statistical outlier warnings" in answer
+
+
 def test_metrics_quality_and_search_cover_entire_dataset(database):
     today = date.today().isoformat()
     content = "order_date,revenue,customer_id\n" + "".join(
@@ -251,6 +281,20 @@ def test_quality_reports_invalid_dates_mixed_numeric_values_and_outliers(databas
     assert anomalies["rows_scanned"] == 21
     assert anomalies["anomalies"][0]["observed_value"] == 1000
     assert any(issue["type"] == "statistical_outliers" for issue in analytics.quality_report(anomaly_dataset["id"])["issues"])
+
+
+def test_anomaly_detection_skips_binary_and_identifier_columns(database):
+    rows = ["id,hypertension,amount"]
+    rows.extend(
+        f"{1000000 if index == 20 else index + 1},{1 if index == 20 else 0},{1000 if index == 20 else 10}"
+        for index in range(21)
+    )
+    dataset = upload(database, "binary-and-id.csv", "\n".join(rows) + "\n")
+
+    report = analytics.detect_anomalies(dataset["id"])
+
+    assert [finding["column"] for finding in report["anomalies"]] == ["amount"]
+    assert "excluding binary 0/1 fields" in report["method"]
 
 
 def test_studio_detects_schema_and_aggregates_filtered_chart_data(database):

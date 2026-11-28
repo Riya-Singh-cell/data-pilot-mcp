@@ -413,9 +413,7 @@ npm run lint
 npm run build
 ```
 
-## Screenshots
 
-Add dashboard, dataset editor, SQL workspace, and MCP evidence screenshots here after generating them.
 
 ## Future Improvements
 
